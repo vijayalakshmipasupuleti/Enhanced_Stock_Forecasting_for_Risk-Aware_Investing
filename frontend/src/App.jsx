@@ -5,7 +5,10 @@ import LoginPage from './components/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import MarketPage from './pages/MarketPage';
 import CalculatorsPage from './pages/CalculatorsPage';
-import SearchPage from './pages/SearchPage';
+import SipPage from './pages/SipPage';
+import LumpsumPage from './pages/LumpsumPage';
+import XirrPage from './pages/XirrPage';
+import WealthProjectionPage from './pages/WealthProjectionPage';
 import StockDetailPage from './pages/StockDetailPage';
 
 function App() {
@@ -26,7 +29,10 @@ function App() {
           <Route path="/" element={<DashboardPage user={user} />} />
           <Route path="/market" element={<MarketPage />} />
           <Route path="/calculators" element={<CalculatorsPage />} />
-          <Route path="/search" element={<SearchPage />} />
+          <Route path="/calculators/sip" element={<SipPage />} />
+          <Route path="/calculators/lumpsum" element={<LumpsumPage />} />
+          <Route path="/calculators/xirr" element={<XirrPage />} />
+          <Route path="/calculators/wealth-forecaster" element={<WealthProjectionPage />} />
           <Route path="/stock/:symbol" element={<StockDetailPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
