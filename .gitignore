@@ -1,0 +1,28 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+data/
+outputs/
+yf_cache/
+*.egg-info/
+websockets/
+
+# Node
+node_modules/
+frontend/node_modules/
+dist/
+build/
+
+# Environment
+.env
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

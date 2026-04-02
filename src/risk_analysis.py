@@ -10,6 +10,8 @@ class RiskAnalyzer:
         """Std dev of returns."""
         if prices is None:
             prices = self.predicted
+        if len(prices) < 2:
+            return 0.0
         returns = np.diff(prices) / prices[:-1]
         return np.std(returns)
 
@@ -17,6 +19,8 @@ class RiskAnalyzer:
         """Maximum observed loss from a peak to a trough."""
         if prices is None:
             prices = self.predicted
+        if len(prices) == 0:
+            return 0.0
         peak = prices[0]
         max_drawdown = 0
         for price in prices:
@@ -44,6 +48,8 @@ class RiskAnalyzer:
         """Annualized Sharpe Ratio (assuming daily data, 252 trading days)."""
         if prices is None:
             prices = self.predicted
+        if len(prices) < 2:
+            return 0.0
         returns = np.diff(prices) / prices[:-1]
         mean_return = np.mean(returns)
         std_return = np.std(returns)
@@ -55,8 +61,10 @@ class RiskAnalyzer:
 
     def get_risk_metrics(self):
         """Returns a dict of all risk metrics."""
+        volatility = self.calculate_volatility()
         return {
-            "Volatility": self.calculate_volatility(),
+            "Volatility": volatility,
+            "Annualized Volatility": volatility * np.sqrt(252),
             "Max Drawdown": self.calculate_max_drawdown(),
             "VaR (95%)": self.calculate_var(),
             "Sharpe Ratio": self.calculate_sharpe_ratio()

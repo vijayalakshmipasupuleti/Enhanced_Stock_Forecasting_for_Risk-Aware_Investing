@@ -1,78 +1,146 @@
-# Risk-Aware Stock Price Forecasting Using Machine Learning and Deep Learning Techniques
+# Stock Market Portfolio Main
 
-## Project Overview
-This project is an advanced stock forecasting system designed for an MCA final year project. It goes beyond simple price prediction by integrating **Risk Management** metrics.
+Hybrid MCA/final-year project that combines a stock forecasting pipeline, a FastAPI backend, and a React dashboard.
 
-### Key Objectives
-1. **Predict** stock prices using Classical ML (Linear Regression, Random Forest, XGBoost) and Deep Learning (LSTM, Bi-LSTM).
-2. **Quantify Risk** using Volatility, Value at Risk (VaR), Max Drawdown, and Sharpe Ratio.
-3. **Decision Support** via a Risk-Aware Decision Score.
+## What This Project Does
 
-## Project Structure
-```
-stock_project/
-├── data/                   # Stores downloaded stock data
-├── outputs/                # Generated plots and visualizations
-├── src/
-│   ├── data_loader.py      # Fetches proprietary data from Yahoo Finance
-│   ├── feature_engineering.py # Technical Indicators (RSI, MACD, etc.)
-│   ├── models.py           # ML & DL Model Definitions
-│   ├── risk_analysis.py    # VaR, Drawdown, Sharpe Calculations
-│   ├── evaluation.py       # RMSE, MAPE, Directional Accuracy
-│   └── visualization.py    # Plotting utilities
-├── main.py                 # Main execution script
-└── requirements.txt        # Python dependencies
-```
+- Downloads and caches stock data from Yahoo Finance
+- Builds technical indicators such as RSI, MACD, moving averages, and lag features
+- Trains ML and DL models for stock forecasting
+- Computes risk metrics including volatility, VaR, max drawdown, Sharpe ratio, and a decision score
+- Exposes prediction and history APIs through FastAPI
+- Renders a frontend dashboard with portfolio views, stock analysis, charts, and calculators
 
-## Setup Instructions
+## Current Architecture
 
-### 1. Prerequisites
-- Python 3.8+
-- Internet connection (to fetch stock data)
+This repository contains three connected layers:
 
-### 2. Install Dependencies
+1. Root ML pipeline
+   - `main.py`
+   - `src/data_loader.py`
+   - `src/feature_engineering.py`
+   - `src/models.py`
+   - `src/risk_analysis.py`
+   - `src/evaluation.py`
+   - `src/visualization.py`
+
+2. Backend API
+   - `backend/main.py`
+   - FastAPI endpoints:
+     - `POST /predict`
+     - `POST /history`
+
+3. Frontend web app
+   - `frontend/src/App.jsx`
+   - Components under `frontend/src/components/`
+
+## Frontend Features
+
+- Demo login page with sample users
+- Demo portfolio dashboard with selectable holdings
+- Stock analysis flow backed by `POST /predict`
+- Candlestick chart backed by `POST /history`
+- Market overview screen with simulated live-style data
+- Wealth projection calculator
+- Lumpsum calculator
+- XIRR calculator
+
+## Important Notes
+
+- The login and portfolio data are currently demo data.
+- The market overview screen is a simulated dashboard, not a live market feed.
+- The forecasting pipeline has been updated to predict the next closing price instead of learning the current close directly.
+
+## Setup
+
+### Prerequisites
+
+- Python 3.10+
+- Node.js and npm
+- A working virtual environment in `venv/`
+
+### Install Python Dependencies
+
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Run the Project
-You can run the main script with default settings (Apple stock, 2020-2023):
+### Install Frontend Dependencies
+
 ```bash
-python main.py
+cd frontend
+npm install
 ```
 
-Or specify a custom ticker and date range:
+### Install Root Tooling
+
 ```bash
-python main.py --ticker GOOGL --start 2018-01-01 --end 2024-01-01
+npm install
 ```
 
-## Features Implemented
+## Run Options
 
-### Technical Indicators
-- **RSI (Relative Strength Index)**: Momentum indicator.
-- **MACD**: Trend-following momentum indicator.
-- **Moving Averages (20, 50, 200)**: Trend smoothing.
-- **Volatility**: Rolling standard deviation.
+### Run the Full Stack
 
-### Models
-1. **Linear Regression**: Baseline model.
-2. **Random Forest**: Ensemble learning for non-linear relationships.
-3. **XGBoost**: Gradient boosting for high performance.
-4. **LSTM (Long Short-Term Memory)**: Recurrent Neural Network for time-series.
-5. **Bi-LSTM**: Bidirectional LSTM for capturing future/past context in training.
+From the repo root:
 
-### Risk Metrics
-- **Value at Risk (VaR)**: estimating the maximum potential loss.
-- **Sharpe Ratio**: Risk-adjusted return.
-- **Maximum Drawdown**: Worst peak-to-trough decline.
+```bash
+npm run dev
+```
 
-## Results
-Check the `outputs/` folder after running the script. It will contain:
-- `LSTM_prediction.png`
+This starts:
+
+- FastAPI on `http://localhost:8081`
+- Vite frontend on its default dev port
+
+### Run Only the Backend
+
+```bash
+run_backend.bat
+```
+
+### Run Only the Root ML Pipeline
+
+```bash
+run.bat
+```
+
+Or directly:
+
+```bash
+python main.py --ticker AAPL --start 2020-01-01 --end 2023-01-01
+```
+
+## Outputs
+
+Running the root ML pipeline writes charts into `outputs/`, for example:
+
+- `LinearRegression_prediction.png`
+- `RandomForest_prediction.png`
 - `XGBoost_prediction.png`
 - `rmse_comparison.png`
 - `sharpe_comparison.png`
+- `var_comparison.png`
 
-## Authors
-- [Your Name/ID]
-- JNTUA MCA Department
+## Tech Stack
+
+- Python
+- FastAPI
+- Uvicorn
+- pandas
+- numpy
+- scikit-learn
+- xgboost
+- tensorflow
+- yfinance
+- React
+- Vite
+- Recharts
+- ApexCharts
+
+## Next Cleanup Targets
+
+- Replace demo login and portfolio data with real persistence
+- Improve API error handling and configuration management
+- Add tests for the ML pipeline and backend endpoints
+- Separate academic/demo views from production-style functionality more clearly
