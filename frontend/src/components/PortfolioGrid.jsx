@@ -142,7 +142,7 @@ const PortfolioGrid = ({ user, onSelectStock, onTotalCalculated }) => {
                 })}
             </div>
 
-            <style jsx>{`
+            <style>{`
         .portfolio-section {
           margin-bottom: 3rem;
         }

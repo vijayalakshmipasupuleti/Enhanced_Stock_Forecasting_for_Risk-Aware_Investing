@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { LayoutDashboard, BarChart3, Calculator, TrendingUp, LogOut, Search, Menu, X, Loader2, Building2, ArrowRight } from 'lucide-react';
+import { LayoutDashboard, BarChart3, Calculator, TrendingUp, LogOut, Search, Menu, X, Loader2, Building2, ArrowRight, Brain } from 'lucide-react';
 import { API_BASE } from '../utils/format';
 
 const NAV_ITEMS = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard', exact: true },
   { to: '/market', icon: BarChart3, label: 'Market', exact: true },
   { to: '/calculators', icon: Calculator, label: 'Calculators', exact: false },
+  { to: '/ai-forecast', icon: Brain, label: 'AI Forecast', exact: true },
 ];
 
 const Layout = ({ user, onLogout, children }) => {

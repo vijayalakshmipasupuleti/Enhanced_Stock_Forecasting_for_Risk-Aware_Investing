@@ -99,7 +99,7 @@ const GlobalSearch = ({ onSearch }) => {
                 </div>
             )}
 
-            <style jsx>{`
+            <style>{`
                 .global-search-container {
                     margin-bottom: 3rem;
                     position: relative;

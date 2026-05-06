@@ -21,8 +21,21 @@ from src.feature_engineering import FeatureEngineer
 from src.models import ModelTrainer
 from src.risk_analysis import RiskAnalyzer
 from src.evaluation import evaluate_predictions
+from src.forecaster import run_forecast
+from src.database import (
+    init_db, authenticate_user, register_user,
+    get_portfolio, add_holding, buy_holding, sell_holding, remove_holding, set_stop_loss,
+    log_trade, get_trade_history, clear_trade_history,
+    add_sl_alert, get_sl_alerts, dismiss_sl_alert, clear_sl_alerts,
+)
 
-app = FastAPI(title="AntigravityStocks API", version="1.0.0")
+app = FastAPI(title="StockVista API", version="2.0.0")
+
+@app.on_event("startup")
+def on_startup():
+    """Initialize the SQLite database on server start."""
+    init_db()
+    print("[DB] Database initialised.")
 
 # CORS Middleware
 app.add_middleware(
@@ -93,21 +106,29 @@ def _fi_get(info, key, default=None):
     return default
 
 def _http_get_json(url: str):
-    req = Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        },
-    )
-    with urlopen(req, timeout=15) as response:
-        return json.loads(response.read().decode("utf-8"))
+    """Fetch JSON from Yahoo Finance, retrying on query2 if query1 fails (rate-limit/timeout)."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json",
+    }
+    urls_to_try = [url, url.replace("query1.finance.yahoo.com", "query2.finance.yahoo.com")]
+    last_exc = None
+    for attempt_url in urls_to_try:
+        try:
+            req = Request(attempt_url, headers=headers)
+            with urlopen(req, timeout=20) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except Exception as exc:
+            last_exc = exc
+            continue
+    raise last_exc
 
 def _fetch_quote_via_chart(ticker: str):
     """Fetch latest quote data using the v8 chart API (more reliable than v7 quote)."""
     symbol = ticker.strip().upper()
     url = (
         f"https://query1.finance.yahoo.com/v8/finance/chart/{url_quote(symbol)}"
-        f"?range=2d&interval=1d"
+        f"?range=7d&interval=1d"
     )
     try:
         payload = _http_get_json(url)
@@ -121,23 +142,31 @@ def _fetch_quote_via_chart(ticker: str):
     chart = result[0]
     meta = chart.get("meta", {})
     timestamps = chart.get("timestamp", []) or []
-    quotes = (chart.get("indicators", {}).get("quote", []) or [{}])[0]
-    closes = quotes.get("close", []) or []
-    volumes = quotes.get("volume", []) or []
+    indicators = chart.get("indicators", {}).get("quote", [{}])[0]
+    closes = indicators.get("close", []) or []
 
-    current_price = _safe_float(meta.get("regularMarketPrice"))
+    # 1. Primary: Last valid close from chart indicators (most accurate for official close)
+    current_price = 0.0
+    for c in reversed(closes):
+        if c is not None and c > 0:
+            current_price = _safe_float(c)
+            break
+            
+    # 2. Secondary: regularMarketPrice as fallback if chart is empty
+    if current_price <= 0:
+        current_price = _safe_float(meta.get("regularMarketPrice"))
+    
+    # 3. Tertiary: chartPreviousClose as a last resort
     previous_close = _safe_float(meta.get("chartPreviousClose") or meta.get("previousClose"))
+    if current_price <= 0:
+        current_price = previous_close
 
-    if current_price == 0 and closes:
-        for c in reversed(closes):
-            if c is not None:
-                current_price = _safe_float(c)
-                break
-
-    day_volume = 0.0
-    if volumes:
+    # 4. Extract Volume
+    volumes = indicators.get("volume", []) or []
+    day_volume = _safe_float(meta.get("regularMarketVolume"))
+    if day_volume <= 0:
         for v in reversed(volumes):
-            if v is not None:
+            if v is not None and v > 0:
                 day_volume = _safe_float(v)
                 break
 
@@ -202,14 +231,12 @@ async def predict(request: StockRequest):
         fe = FeatureEngineer(df)
         df_features = fe.prepare_data()
 
-        # 3. Model Training (Fastest Model for API - XGBoost)
-        # Note: In a real app, successful models are saved/loaded. 
-        # Here we train on the fly as per original script design.
+        # 3. Model Training (Ensemble for stability)
         trainer = ModelTrainer(df_features, target_col='Close')
         trainer.split_data()
         
-        model_name = 'XGBoost'
-        trainer.train_xgboost()
+        model_name = 'Ensemble'
+        trainer.train_ensemble()
         
         # 4. Predictions & Evaluation
         preds = trainer.predict(model_name)
@@ -361,37 +388,71 @@ async def search_stocks(
     q: str = Query("", min_length=1),
     limit: int = Query(10, ge=1, le=25)
 ):
-    """Real-time stock search using Yahoo Finance autocomplete API."""
+    """Real-time stock search using Yahoo Finance autocomplete API.
+    Fetches up to 40 raw results from Yahoo then filters and ranks them:
+      - Drops MUTUALFUND, CURRENCY, CRYPTOCURRENCY, FUTURE, OPTION types
+      - Drops Yahoo internal fund codes beginning with '0P'
+      - Drops entries with no usable name
+      - Returns EQUITY first, then INDEX, then ETF, then others
+    """
     try:
+        # Over-fetch so we still have enough after filtering junk
+        fetch_count = min(limit * 4, 40)
         url = (
             f"https://query1.finance.yahoo.com/v1/finance/search"
-            f"?q={url_quote(q)}&quotesCount={limit}&newsCount=0&listsCount=0"
+            f"?q={url_quote(q)}&quotesCount={fetch_count}&newsCount=0&listsCount=0"
         )
         payload = _http_get_json(url)
         quotes = payload.get("quotes", [])
 
+        # Types to completely discard
+        SKIP_TYPES = {"MUTUALFUND", "CURRENCY", "CRYPTOCURRENCY", "FUTURE", "OPTION"}
+
         results = []
         for item in quotes:
-            symbol = item.get("symbol", "")
-            exchange = item.get("exchDisp") or item.get("exchange", "")
-            stock_type = item.get("quoteType", "EQUITY")
-            name = item.get("shortname") or item.get("longname") or symbol
+            symbol     = item.get("symbol", "")
+            quote_type = item.get("quoteType", "EQUITY").upper()
 
-            # Determine market tag
+            # Drop unwanted asset types
+            if quote_type in SKIP_TYPES:
+                continue
+            # Drop Yahoo internal 0Pxxxxxxxxxx fund codes
+            if symbol.startswith("0P"):
+                continue
+            # Drop entries with no usable display name
+            name = item.get("shortname") or item.get("longname") or ""
+            if not name.strip():
+                continue
+
+            exchange = item.get("exchDisp") or item.get("exchange", "")
+
+            # Market tag
             market = "GLOBAL"
             if symbol.endswith(".NS"):
                 market = "NSE"
             elif symbol.endswith(".BO"):
                 market = "BSE"
 
+            # Priority score for sorting: lower = shown first
+            prio = 0 if quote_type == "EQUITY" else 1 if quote_type == "INDEX" else 2 if quote_type == "ETF" else 3
+
             results.append({
-                "symbol": symbol,
-                "name": name,
+                "symbol":   symbol,
+                "name":     name.strip(),
                 "exchange": exchange,
-                "type": stock_type,
-                "market": market,
+                "type":     quote_type,
+                "market":   market,
+                "_prio":    prio,
             })
 
+        # Sort: EQUITYs first (preserving Yahoo's relevance order within each tier)
+        results.sort(key=lambda r: r["_prio"])
+
+        # Remove internal sort key before returning
+        for r in results:
+            r.pop("_prio", None)
+
+        results = results[:limit]
         return {"query": q, "count": len(results), "results": results}
     except Exception as e:
         traceback.print_exc()
@@ -407,7 +468,7 @@ async def stock_detail(
         symbol = ticker.strip().upper()
         url = (
             f"https://query1.finance.yahoo.com/v8/finance/chart/{url_quote(symbol)}"
-            f"?range=5d&interval=1d"
+            f"?range=10d&interval=1d"
         )
         payload = _http_get_json(url)
         result = payload.get("chart", {}).get("result", [])
@@ -424,16 +485,33 @@ async def stock_detail(
         closes = quotes_data.get("close", []) or []
         volumes = quotes_data.get("volume", []) or []
 
-        current_price = _safe_float(meta.get("regularMarketPrice"))
+        # Prioritize last valid close from chart for official accuracy
+        current_price = 0.0
+        for c in reversed(closes):
+            if c is not None and c > 0:
+                current_price = _safe_float(c)
+                break
+        
+        if current_price <= 0:
+            current_price = _safe_float(meta.get("regularMarketPrice"))
+
         previous_close = _safe_float(meta.get("chartPreviousClose") or meta.get("previousClose"))
+        if current_price <= 0:
+            current_price = previous_close
         change = current_price - previous_close if previous_close else 0.0
         change_pct = (change / previous_close * 100) if previous_close else 0.0
 
-        # Get today's OHLV from most recent data point
-        today_open = _safe_float(opens[-1]) if opens else 0.0
-        today_high = _safe_float(highs[-1]) if highs else 0.0
-        today_low = _safe_float(lows[-1]) if lows else 0.0
-        today_volume = _safe_float(volumes[-1]) if volumes else 0.0
+        # Get most recent non-None OHLV (Yahoo sometimes appends a null row for weekends/holidays)
+        def _last_valid(lst):
+            for v in reversed(lst):
+                if v is not None:
+                    return _safe_float(v)
+            return 0.0
+
+        today_open   = _last_valid(opens)
+        today_high   = _last_valid(highs)
+        today_low    = _last_valid(lows)
+        today_volume = _last_valid(volumes)
 
         # Calculate 52-week from meta or available data
         fifty_two_high = _safe_float(meta.get("fiftyTwoWeekHigh"))
@@ -538,6 +616,251 @@ async def intraday(
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+class ForecastRequest(BaseModel):
+    ticker: str
+
+@app.post("/forecast")
+async def forecast_stock(request: ForecastRequest):
+    """
+    AI-powered multi-horizon price forecast.
+    Trains XGBoost on 3 years of price history + technical indicators + news sentiment.
+    Returns predicted prices at 1 week, 1 month, and 6 months horizons.
+    """
+    try:
+        ticker = request.ticker.strip().upper()
+        if not ticker:
+            raise HTTPException(status_code=400, detail="Ticker symbol is required")
+        print(f"[FORECAST] Starting forecast for {ticker}")
+        result = run_forecast(ticker)
+        print(f"[FORECAST] Done for {ticker}")
+        return result
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DATABASE-BACKED AUTH & PORTFOLIO ENDPOINTS
+# ─────────────────────────────────────────────────────────────────────────────
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+
+class AddHoldingRequest(BaseModel):
+    username: str
+    symbol: str
+    name: str
+    qty: float
+    avg_price: float
+    stop_loss: Optional[float] = None
+
+class BuyRequest(BaseModel):
+    username: str
+    symbol: str
+    qty: float
+    price: float
+
+class SellRequest(BaseModel):
+    username: str
+    symbol: str
+    qty: float
+
+class RemoveRequest(BaseModel):
+    username: str
+    symbol: str
+
+class StopLossRequest(BaseModel):
+    username: str
+    symbol: str
+    stop_loss: Optional[float] = None
+
+class TradeLogRequest(BaseModel):
+    username: str
+    symbol: str
+    name: str
+    action: str
+    qty: float
+    price: float
+
+class SlAlertRequest(BaseModel):
+    username: str
+    symbol: str
+    message: str
+
+class DismissAlertRequest(BaseModel):
+    alert_id: str
+    username: str
+
+
+@app.post("/auth/login")
+async def login(req: LoginRequest):
+    user = authenticate_user(req.username, req.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    return {"success": True, "username": user["username"]}
+
+
+@app.post("/auth/register")
+async def register(req: RegisterRequest):
+    try:
+        result = register_user(req.username, req.password)
+        return {"success": True, "username": result["username"]}
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.get("/db/portfolio")
+async def db_get_portfolio(username: str = Query(...)):
+    try:
+        holdings = get_portfolio(username)
+        return {"username": username, "holdings": holdings}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/db/portfolio/add")
+async def db_add_holding(req: AddHoldingRequest):
+    try:
+        holdings = add_holding(req.username, req.symbol, req.name, req.qty, req.avg_price, req.stop_loss)
+        log_trade(req.username, req.symbol, req.name, "BUY", req.qty, req.avg_price)
+        return {"success": True, "holdings": holdings}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/db/portfolio/buy")
+async def db_buy(req: BuyRequest):
+    try:
+        holdings = buy_holding(req.username, req.symbol, req.qty, req.price)
+        # Get name from portfolio
+        h = next((h for h in holdings if h["symbol"] == req.symbol.upper()), {})
+        log_trade(req.username, req.symbol, h.get("name", req.symbol), "BUY", req.qty, req.price)
+        return {"success": True, "holdings": holdings}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/db/portfolio/sell")
+async def db_sell(req: SellRequest):
+    try:
+        # Get holding details before sell for trade log
+        curr = get_portfolio(req.username)
+        h = next((x for x in curr if x["symbol"] == req.symbol.upper()), {})
+        # Fetch live price for trade log
+        price_data = _fetch_quote_via_chart(req.symbol)
+        price = price_data.get("price") or h.get("avg_price", 0)
+        holdings = sell_holding(req.username, req.symbol, req.qty)
+        log_trade(req.username, req.symbol, h.get("name", req.symbol), "SELL", req.qty, price)
+        return {"success": True, "holdings": holdings}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/db/portfolio/remove")
+async def db_remove(req: RemoveRequest):
+    try:
+        curr = get_portfolio(req.username)
+        h = next((x for x in curr if x["symbol"] == req.symbol.upper()), {})
+        price_data = _fetch_quote_via_chart(req.symbol)
+        price = price_data.get("price") or h.get("avg_price", 0)
+        holdings = remove_holding(req.username, req.symbol)
+        log_trade(req.username, req.symbol, h.get("name", req.symbol), "REMOVE", h.get("qty", 0), price)
+        return {"success": True, "holdings": holdings}
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/db/portfolio/stoploss")
+async def db_set_stoploss(req: StopLossRequest):
+    try:
+        holdings = set_stop_loss(req.username, req.symbol, req.stop_loss)
+        return {"success": True, "holdings": holdings}
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/db/trade/log")
+async def db_log_trade(req: TradeLogRequest):
+    try:
+        entry = log_trade(req.username, req.symbol, req.name, req.action, req.qty, req.price)
+        return {"success": True, "entry": entry}
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/db/trade/history")
+async def db_trade_history(username: str = Query(...), limit: int = Query(200)):
+    try:
+        history = get_trade_history(username, limit)
+        return {"username": username, "history": history}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/db/trade/history")
+async def db_clear_history(username: str = Query(...)):
+    try:
+        clear_trade_history(username)
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/db/alerts/add")
+async def db_add_alert(req: SlAlertRequest):
+    try:
+        entry = add_sl_alert(req.username, req.symbol, req.message)
+        return {"success": True, "alert": entry}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/db/alerts")
+async def db_get_alerts(username: str = Query(...)):
+    try:
+        alerts = get_sl_alerts(username)
+        return {"username": username, "alerts": alerts}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/db/alerts/dismiss")
+async def db_dismiss_alert(req: DismissAlertRequest):
+    try:
+        dismiss_sl_alert(req.alert_id, req.username)
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/db/alerts")
+async def db_clear_alerts(username: str = Query(...)):
+    try:
+        clear_sl_alerts(username)
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8081, reload=True)

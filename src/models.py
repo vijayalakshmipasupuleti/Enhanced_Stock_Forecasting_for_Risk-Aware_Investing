@@ -1,9 +1,9 @@
-import numpy as np
-import pandas as pd
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import Ridge
 from sklearn.ensemble import RandomForestRegressor
 from xgboost import XGBRegressor
+from sklearn.preprocessing import MinMaxScaler
+import numpy as np
+import pandas as pd
 
 class ModelTrainer:
     def __init__(self, data, target_col='Close', test_size=0.2, seq_length=60):
@@ -11,7 +11,7 @@ class ModelTrainer:
         self.target_col = target_col
         self.test_size = test_size
         self.seq_length = seq_length
-        self.scalers = {} # To store scalers for inverse transform
+        self.scalers = {} 
         self.X_train = None
         self.X_test = None
         self.y_train = None
@@ -30,7 +30,6 @@ class ModelTrainer:
             self.dates = pd.Series(self.data.index)
             data_numeric = self.data
 
-        # Predict the next closing price using only information available today.
         X_raw = data_numeric.drop(columns=[self.target_col]).copy()
         y_raw = data_numeric[self.target_col].shift(-1)
         valid_mask = y_raw.notna()
@@ -62,55 +61,61 @@ class ModelTrainer:
     def prepare_lstm_data(self, X_data, y_data):
         """Reshapes data for LSTM [samples, time steps, features]."""
         X_seq, y_seq = [], []
-        # Create sequences
         for i in range(self.seq_length, len(X_data)):
             X_seq.append(X_data[i-self.seq_length:i])
             y_seq.append(y_data[i])
         return np.array(X_seq), np.array(y_seq)
 
     def train_linear_regression(self):
-        print("Training Linear Regression...")
-        model = LinearRegression()
-        # For ML models, we ignore the sequence structure and treat rows as independent samples
-        # effectively using lags as temporal features.
+        print("Training Ridge Regression...")
+        model = Ridge(alpha=1.0)
         model.fit(self.X_train, self.y_train)
         self.models['LinearRegression'] = model
         return model
 
     def train_random_forest(self):
         print("Training Random Forest...")
-        model = RandomForestRegressor(n_estimators=100, random_state=42)
-        # RF doesn't handle time series natively, but works with lag features
+        model = RandomForestRegressor(n_estimators=200, max_depth=8, random_state=42, n_jobs=-1)
         model.fit(self.X_train, self.y_train)
         self.models['RandomForest'] = model
         return model
 
     def train_xgboost(self):
         print("Training XGBoost...")
-        model = XGBRegressor(n_estimators=100, learning_rate=0.05, random_state=42)
+        model = XGBRegressor(n_estimators=500, learning_rate=0.03, max_depth=5, random_state=42)
         model.fit(self.X_train, self.y_train)
         self.models['XGBoost'] = model
         return model
 
+    def train_ensemble(self):
+        """Trains and stores an ensemble of XGB, RF, and Ridge."""
+        print("Training Ensemble (XGB + RF + Ridge)...")
+        xgb = self.train_xgboost()
+        rf = self.train_random_forest()
+        ridge = self.train_linear_regression()
+        self.models['Ensemble'] = {'xgb': xgb, 'rf': rf, 'ridge': ridge}
+        return self.models['Ensemble']
+
     def train_lstm(self):
         print("Training LSTM...")
-        # Lazy import tensorflow
         import tensorflow as tf
         from tensorflow.keras.models import Sequential
-        from tensorflow.keras.layers import LSTM, Dense, Input
+        from tensorflow.keras.layers import LSTM, Dense, Input, Dropout
 
-        # Prepare data
         X_train_seq, y_train_seq = self.prepare_lstm_data(self.X_train, self.y_train)
         
-        model = Sequential()
-        model.add(Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2])))
-        model.add(LSTM(50, return_sequences=True))
-        model.add(LSTM(50, return_sequences=False))
-        model.add(Dense(25))
-        model.add(Dense(1))
+        model = Sequential([
+            Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2])),
+            LSTM(64, return_sequences=True),
+            Dropout(0.2),
+            LSTM(32, return_sequences=False),
+            Dropout(0.2),
+            Dense(16, activation='relu'),
+            Dense(1)
+        ])
         
         model.compile(optimizer='adam', loss='mean_squared_error')
-        model.fit(X_train_seq, y_train_seq, batch_size=32, epochs=5, verbose=1) # Low epochs for demo
+        model.fit(X_train_seq, y_train_seq, batch_size=32, epochs=10, verbose=0)
         self.models['LSTM'] = model
         return model
 
@@ -118,19 +123,22 @@ class ModelTrainer:
         print("Training Bi-LSTM...")
         import tensorflow as tf
         from tensorflow.keras.models import Sequential
-        from tensorflow.keras.layers import LSTM, Dense, Bidirectional, Input
+        from tensorflow.keras.layers import LSTM, Dense, Bidirectional, Input, Dropout
 
         X_train_seq, y_train_seq = self.prepare_lstm_data(self.X_train, self.y_train)
         
-        model = Sequential()
-        model.add(Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2])))
-        model.add(Bidirectional(LSTM(50, return_sequences=True)))
-        model.add(Bidirectional(LSTM(50, return_sequences=False)))
-        model.add(Dense(25))
-        model.add(Dense(1))
+        model = Sequential([
+            Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2])),
+            Bidirectional(LSTM(64, return_sequences=True)),
+            Dropout(0.2),
+            Bidirectional(LSTM(32, return_sequences=False)),
+            Dropout(0.2),
+            Dense(16, activation='relu'),
+            Dense(1)
+        ])
         
         model.compile(optimizer='adam', loss='mean_squared_error')
-        model.fit(X_train_seq, y_train_seq, batch_size=32, epochs=5, verbose=1)
+        model.fit(X_train_seq, y_train_seq, batch_size=32, epochs=10, verbose=0)
         self.models['BiLSTM'] = model
         return model
 
@@ -140,9 +148,16 @@ class ModelTrainer:
             raise ValueError(f"Model {model_name} not trained yet.")
         
         print(f"Predicting with {model_name}...")
+        if model_name == 'Ensemble':
+            p_xgb = model['xgb'].predict(self.X_test)
+            p_rf  = model['rf'].predict(self.X_test)
+            p_ridge = model['ridge'].predict(self.X_test)
+            preds = 0.5 * p_xgb + 0.3 * p_rf + 0.2 * p_ridge
+            return self.scalers['target_scaler'].inverse_transform(preds.reshape(-1, 1)).flatten()
+        
         if model_name in ['LSTM', 'BiLSTM']:
             X_test_seq, _ = self.prepare_lstm_data(self.X_test, self.y_test)
-            preds = model.predict(X_test_seq)
+            preds = model.predict(X_test_seq, verbose=0)
             return self.scalers['target_scaler'].inverse_transform(preds).flatten()
         else:
             preds = model.predict(self.X_test)

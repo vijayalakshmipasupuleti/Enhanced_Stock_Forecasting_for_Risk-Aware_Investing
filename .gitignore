@@ -3,11 +3,12 @@ venv/
 __pycache__/
 *.pyc
 *.pyo
-data/
-outputs/
-yf_cache/
 *.egg-info/
-websockets/
+
+# Data & Cache (auto-generated)
+backend/data/
+backend/yf_cache/
+outputs/
 
 # Node
 node_modules/
@@ -26,3 +27,5 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo

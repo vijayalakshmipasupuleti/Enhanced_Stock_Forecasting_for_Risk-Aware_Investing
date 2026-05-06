@@ -1,198 +1,313 @@
 import React, { useState } from 'react';
-import { User, Lock, ArrowRight } from 'lucide-react';
+import { User, Lock, ArrowRight, UserPlus, TrendingUp } from 'lucide-react';
+import { API_BASE } from '../utils/format';
 
 const LoginPage = ({ onLogin }) => {
-    const [username, setUsername] = useState('');
-    const [password, setPassword] = useState('');
-    const [error, setError] = useState('');
+  const [mode,     setMode]     = useState('login');   // 'login' | 'register'
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirm,  setConfirm]  = useState('');
+  const [error,    setError]    = useState('');
+  const [loading,  setLoading]  = useState(false);
 
-    const handleLogin = (e) => {
-        e.preventDefault();
-        // Sample login details for 3 users
-        const users = {
-            'user1': 'pass1',
-            'user2': 'pass2',
-            'user3': 'pass3'
-        };
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
 
-        if (users[username] && users[username] === password) {
-            onLogin(username);
-        } else {
-            setError('Invalid credentials. Try user1/pass1');
-        }
-    };
+    if (!username.trim() || !password.trim()) {
+      setError('Username and password are required.');
+      return;
+    }
 
-    return (
-        <div className="login-container">
-            <div className="login-card glass-panel">
-                <div className="login-header">
-                    <h1 className="text-gradient">StockVista</h1>
-                    <p className="subtitle">Indian Stock Market Portfolio Manager</p>
-                </div>
+    if (mode === 'register') {
+      if (password !== confirm) { setError('Passwords do not match.'); return; }
+      if (password.length < 4)  { setError('Password must be at least 4 characters.'); return; }
+    }
 
-                <form onSubmit={handleLogin} className="login-form">
-                    <div className="input-group">
-                        <User className="input-icon" size={20} />
-                        <input
-                            type="text"
-                            placeholder="Username"
-                            value={username}
-                            onChange={(e) => setUsername(e.target.value)}
-                            className="glass-input"
-                        />
-                    </div>
+    setLoading(true);
+    try {
+      const endpoint = mode === 'login' ? '/auth/login' : '/auth/register';
+      const res = await fetch(`${API_BASE}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username.trim(), password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.detail || 'Something went wrong.');
+        return;
+      }
+      // On success both login & register return the username
+      onLogin(data.username);
+    } catch {
+      setError('Cannot connect to server. Make sure the backend is running.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-                    <div className="input-group">
-                        <Lock className="input-icon" size={20} />
-                        <input
-                            type="password"
-                            placeholder="Password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            className="glass-input"
-                        />
-                    </div>
+  const switchMode = () => {
+    setMode(m => m === 'login' ? 'register' : 'login');
+    setError('');
+    setPassword('');
+    setConfirm('');
+  };
 
-                    {error && <div className="error-message">{error}</div>}
+  return (
+    <div className="login-container">
+      <div className="login-card">
+        {/* Brand */}
+        <div className="login-brand">
+          <div className="brand-icon">
+            <TrendingUp size={28} color="#00f0ff" />
+          </div>
+          <h1 className="brand-title">StockVista</h1>
+          <p className="brand-sub">Indian Stock Market Portfolio Manager</p>
+        </div>
 
-                    <button type="submit" className="login-btn">
-                        <span>Sign In</span>
-                        <ArrowRight size={20} />
-                    </button>
-                </form>
+        {/* Tab switcher */}
+        <div className="auth-tabs">
+          <button
+            className={`auth-tab ${mode === 'login' ? 'active' : ''}`}
+            onClick={() => mode !== 'login' && switchMode()}
+          >
+            Sign In
+          </button>
+          <button
+            className={`auth-tab ${mode === 'register' ? 'active' : ''}`}
+            onClick={() => mode !== 'register' && switchMode()}
+          >
+            Register
+          </button>
+        </div>
 
-                <div className="demo-credentials">
-                    <p>Demo Credentials:</p>
-                    <div className="creds-list">
-                        <span>user1 / pass1</span>
-                        <span>user2 / pass2</span>
-                        <span>user3 / pass3</span>
-                    </div>
-                </div>
+        <form onSubmit={handleSubmit} className="login-form">
+          {/* Username */}
+          <div className="input-group">
+            <User className="input-icon" size={18} />
+            <input
+              type="text"
+              placeholder="Username"
+              value={username}
+              onChange={e => setUsername(e.target.value)}
+              className="glass-input"
+              autoFocus
+              autoComplete="username"
+            />
+          </div>
+
+          {/* Password */}
+          <div className="input-group">
+            <Lock className="input-icon" size={18} />
+            <input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              className="glass-input"
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+            />
+          </div>
+
+          {/* Confirm password (register only) */}
+          {mode === 'register' && (
+            <div className="input-group">
+              <Lock className="input-icon" size={18} />
+              <input
+                type="password"
+                placeholder="Confirm Password"
+                value={confirm}
+                onChange={e => setConfirm(e.target.value)}
+                className="glass-input"
+                autoComplete="new-password"
+              />
             </div>
+          )}
 
-            <style jsx>{`
+          {error && <div className="error-message">{error}</div>}
+
+          <button type="submit" className="login-btn" disabled={loading}>
+            {loading ? (
+              <span className="login-spinner" />
+            ) : mode === 'login' ? (
+              <><ArrowRight size={18} /> Sign In</>
+            ) : (
+              <><UserPlus size={18} /> Create Account</>
+            )}
+          </button>
+        </form>
+
+        {/* Demo hint (login mode only) */}
+        {mode === 'login' && (
+          <div className="demo-credentials">
+            <p>Demo Accounts</p>
+            <div className="creds-list">
+              {['user1 / pass1', 'user2 / pass2', 'user3 / pass3'].map(c => (
+                <button
+                  key={c}
+                  className="cred-chip"
+                  onClick={() => {
+                    const [u, p] = c.split(' / ');
+                    setUsername(u); setPassword(p); setError('');
+                  }}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <style>{`
         .login-container {
           min-height: 100vh;
           display: flex;
           align-items: center;
           justify-content: center;
-          background: radial-gradient(circle at top right, #1a2942 0%, #0a0e17 100%);
+          background: radial-gradient(ellipse at 20% 50%, rgba(0,240,255,0.05) 0%, transparent 60%),
+                      radial-gradient(ellipse at 80% 20%, rgba(189,0,255,0.05) 0%, transparent 60%),
+                      #0a0e17;
           color: white;
+          font-family: 'Inter', sans-serif;
+          padding: 1rem;
         }
 
         .login-card {
           width: 100%;
-          max-width: 400px;
-          padding: 3rem;
+          max-width: 420px;
+          background: rgba(16, 20, 35, 0.95);
+          border: 1px solid rgba(255,255,255,0.08);
           border-radius: 24px;
-          border: 1px solid rgba(255, 255, 255, 0.1);
-          background: rgba(10, 14, 23, 0.7);
+          padding: 2.5rem;
+          box-shadow: 0 24px 60px rgba(0,0,0,0.5);
           backdrop-filter: blur(20px);
-          box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
         }
 
-        .login-header {
+        .login-brand {
           text-align: center;
-          margin-bottom: 2.5rem;
+          margin-bottom: 2rem;
+        }
+        .brand-icon {
+          width: 60px; height: 60px; margin: 0 auto 12px;
+          background: linear-gradient(135deg, rgba(0,240,255,0.12), rgba(189,0,255,0.12));
+          border: 1px solid rgba(0,240,255,0.2);
+          border-radius: 16px;
+          display: flex; align-items: center; justify-content: center;
+        }
+        .brand-title {
+          font-size: 1.8rem; font-weight: 800; margin: 0 0 4px;
+          background: linear-gradient(135deg, #00f0ff, #bd00ff);
+          -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+          background-clip: text;
+        }
+        .brand-sub {
+          color: rgba(255,255,255,0.4); font-size: 0.82rem; margin: 0;
         }
 
-                .subtitle {
-          color: #94a3b8;
-          font-size: 0.9rem;
-          margin-top: 0.5rem;
+        /* Tabs */
+        .auth-tabs {
+          display: flex; gap: 0;
+          background: rgba(255,255,255,0.04);
+          border: 1px solid rgba(255,255,255,0.08);
+          border-radius: 10px;
+          padding: 4px;
+          margin-bottom: 1.5rem;
+        }
+        .auth-tab {
+          flex: 1; padding: 8px;
+          border: none; border-radius: 7px;
+          background: transparent;
+          color: rgba(255,255,255,0.45);
+          font-size: 0.88rem; font-weight: 500;
+          cursor: pointer; transition: all 0.2s;
+        }
+        .auth-tab.active {
+          background: rgba(0,240,255,0.1);
+          color: #00f0ff;
+          font-weight: 700;
         }
 
-        .login-form {
-          display: flex;
-          flex-direction: column;
-          gap: 1.5rem;
-        }
+        /* Form */
+        .login-form { display: flex; flex-direction: column; gap: 1rem; }
 
-        .input-group {
-          position: relative;
-        }
-
+        .input-group { position: relative; }
         .input-icon {
-          position: absolute;
-          left: 1rem;
-          top: 50%;
-          transform: translateY(-50%);
-          color: #64748b;
+          position: absolute; left: 14px; top: 50%;
+          transform: translateY(-50%); color: rgba(255,255,255,0.3);
+          pointer-events: none;
         }
-
         .glass-input {
-          width: 100%;
-          padding: 1rem 1rem 1rem 3rem;
-          border-radius: 12px;
-          border: 1px solid rgba(255, 255, 255, 0.1);
-          background: rgba(255, 255, 255, 0.05);
-          color: white;
-          font-size: 1rem;
-          transition: all 0.3s ease;
-          outline: none;
+          width: 100%; padding: 12px 12px 12px 42px;
+          border-radius: 10px;
+          border: 1px solid rgba(255,255,255,0.08);
+          background: rgba(255,255,255,0.04);
+          color: white; font-size: 0.95rem;
+          outline: none; transition: all 0.2s;
+          box-sizing: border-box;
         }
-
         .glass-input:focus {
-          border-color: var(--accent-cyan);
-          background: rgba(255, 255, 255, 0.1);
-          box-shadow: 0 0 15px rgba(0, 240, 255, 0.2);
+          border-color: #00f0ff;
+          background: rgba(0,240,255,0.04);
+          box-shadow: 0 0 14px rgba(0,240,255,0.15);
+        }
+        .glass-input::placeholder { color: rgba(255,255,255,0.25); }
+
+        .error-message {
+          color: #ff6b6b; font-size: 0.85rem; text-align: center;
+          background: rgba(255,107,107,0.08);
+          border: 1px solid rgba(255,107,107,0.2);
+          padding: 8px 12px; border-radius: 8px;
         }
 
         .login-btn {
-          background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%);
-          color: white;
-          border: none;
-          padding: 1rem;
-          border-radius: 12px;
-          font-weight: 600;
-          font-size: 1rem;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 0.5rem;
-          transition: transform 0.2s, box-shadow 0.2s;
+          width: 100%; padding: 13px;
+          background: linear-gradient(135deg, #00f0ff, #bd00ff);
+          border: none; border-radius: 10px;
+          color: #000; font-weight: 700; font-size: 0.95rem;
+          cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;
+          transition: all 0.2s; margin-top: 4px;
         }
-
-        .login-btn:hover {
+        .login-btn:hover:not(:disabled) {
           transform: translateY(-2px);
-          box-shadow: 0 10px 20px rgba(0, 240, 255, 0.3);
+          box-shadow: 0 10px 24px rgba(0,240,255,0.25);
         }
+        .login-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
-        .error-message {
-          color: #ff6b6b;
-          font-size: 0.9rem;
-          text-align: center;
-          background: rgba(255, 107, 107, 0.1);
-          padding: 0.5rem;
-          border-radius: 8px;
+        .login-spinner {
+          width: 18px; height: 18px; border-radius: 50%;
+          border: 2px solid rgba(0,0,0,0.2);
+          border-top-color: #000;
+          animation: spin 0.7s linear infinite;
         }
+        @keyframes spin { to { transform: rotate(360deg); } }
 
+        /* Demo */
         .demo-credentials {
-          margin-top: 2rem;
-          padding-top: 1.5rem;
-          border-top: 1px solid rgba(255, 255, 255, 0.1);
+          margin-top: 1.5rem; padding-top: 1.25rem;
+          border-top: 1px solid rgba(255,255,255,0.07);
           text-align: center;
-          font-size: 0.8rem;
-          color: #64748b;
         }
-
-        .creds-list {
-          display: flex;
-          justify-content: center;
-          gap: 1rem;
-          margin-top: 0.5rem;
+        .demo-credentials p {
+          font-size: 0.72rem; color: rgba(255,255,255,0.3);
+          text-transform: uppercase; letter-spacing: 1px; margin: 0 0 8px;
         }
-
-        .creds-list span {
-          background: rgba(255, 255, 255, 0.05);
-          padding: 0.2rem 0.6rem;
-          border-radius: 4px;
+        .creds-list { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+        .cred-chip {
+          background: rgba(255,255,255,0.04);
+          border: 1px solid rgba(255,255,255,0.08);
+          border-radius: 6px; padding: 4px 10px;
+          color: rgba(255,255,255,0.5); font-size: 0.75rem;
+          cursor: pointer; transition: all 0.15s;
+        }
+        .cred-chip:hover {
+          border-color: rgba(0,240,255,0.3);
+          color: #00f0ff;
+          background: rgba(0,240,255,0.05);
         }
       `}</style>
-        </div>
-    );
+    </div>
+  );
 };
 
 export default LoginPage;
