@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   TrendingUp, TrendingDown, Briefcase, BarChart3, Activity,
   Plus, Minus, Trash2, ShieldAlert, X, CheckCircle, AlertTriangle,
-  Search, Bell, History, ArrowUpRight, ChevronDown
+  Search, Bell, History, ArrowUpRight, ChevronDown, Loader2
 } from 'lucide-react';
 import { API_BASE, formatPrice, formatPercent, formatINR } from '../utils/format';
 
@@ -796,7 +796,25 @@ const DashboardPage = ({ user }) => {
         </div>
 
         <div className="holdings-table-wrap glass-panel">
-          {stocks.length === 0 ? (
+          {!dbReady ? (
+            <div className="loading-dashboard">
+              <div className="loading-spinner-wrap">
+                <Loader2 size={36} className="spin" style={{ color: 'var(--accent-cyan)' }} />
+                <p className="loading-text">Loading your portfolio...</p>
+              </div>
+              <div className="skeleton-rows">
+                {[1,2,3,4].map(i => (
+                  <div key={i} className="skeleton-row">
+                    <div className="skel-block skel-name" />
+                    <div className="skel-block skel-num" />
+                    <div className="skel-block skel-num" />
+                    <div className="skel-block skel-num" />
+                    <div className="skel-block skel-num" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : stocks.length === 0 ? (
             <div className="empty-dashboard">
               <div className="empty-hero">
                 <div className="hero-icon-ring">
@@ -1100,6 +1118,17 @@ const DashboardPage = ({ user }) => {
         .gc-icon.wealth { background: rgba(255, 171, 0, 0.12); color: #ffab00; }
         .gc-body h3 { font-size: 1rem; font-weight: 700; color: var(--text-primary); margin: 0 0 6px; }
         .gc-body p { font-size: 0.82rem; color: var(--text-secondary); line-height: 1.5; margin: 0; opacity: 0.7; }
+
+        /* ── Loading Dashboard Skeleton ── */
+        .loading-dashboard { padding: 2.5rem 2rem; display: flex; flex-direction: column; align-items: center; gap: 2rem; }
+        .loading-spinner-wrap { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+        .loading-text { color: var(--text-secondary); font-size: 0.95rem; margin: 0; }
+        .skeleton-rows { width: 100%; display: flex; flex-direction: column; gap: 16px; }
+        .skeleton-row { display: flex; gap: 16px; align-items: center; padding: 12px 16px; border-radius: 10px; background: rgba(255,255,255,0.02); }
+        .skel-block { border-radius: 6px; background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%); background-size: 200% 100%; animation: shimmer 1.5s ease-in-out infinite; }
+        .skel-name { width: 140px; height: 18px; }
+        .skel-num { width: 80px; height: 16px; flex-shrink: 0; }
+        @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
 
         /* ── Trade History ── */
